@@ -486,7 +486,7 @@ static inline vec3 projection_soften(
     
     if (distance > eps)
     {
-        float softening = tanhf(distance / (falloff + eps)) * radius;
+        float softening = tanhf(falloff * distance) * radius;
         return projected_position + normalize(original_position - projected_position) * softening;
     }
     else
@@ -494,6 +494,195 @@ static inline vec3 projection_soften(
         return projected_position;
     }
 }
+
+enum
+{
+    LIMIT_TYPE_RECTANGULAR = 0,
+    LIMIT_TYPE_ELLIPSOID = 1,
+    LIMIT_TYPE_KDOP = 2,
+};
+
+static inline vec3 apply_limit(
+    const vec3 limit_space_rotation,
+    const int limit_type,
+    const vec3 rectangular_limit_min,
+    const vec3 rectangular_limit_max,
+    const vec3 ellipsoid_limit_scale,
+    const slice1d<float> kdop_limit_mins,
+    const slice1d<float> kdop_limit_maxs,
+    const vec3 limit_position,
+    const mat3 limit_rotation,
+    const slice1d<vec3> kdop_axes)
+{
+    vec3 limit_space_rotation_projected = limit_space_rotation;
+    
+      if (limit_type == LIMIT_TYPE_RECTANGULAR)
+      {
+          limit_space_rotation_projected = apply_rectangular_limit(
+              limit_space_rotation,
+              rectangular_limit_min,
+              rectangular_limit_max,
+              limit_position,
+              limit_rotation);
+      }
+      else if (limit_type == LIMIT_TYPE_ELLIPSOID)
+      {
+          limit_space_rotation_projected = apply_ellipsoid_limit(
+              limit_space_rotation,
+              ellipsoid_limit_scale,
+              limit_position,
+              limit_rotation);
+      }
+      else if (limit_type == LIMIT_TYPE_KDOP)
+      {
+          limit_space_rotation_projected = apply_kdop_limit(
+              limit_space_rotation,
+              kdop_limit_mins,
+              kdop_limit_maxs,
+              limit_position,
+              limit_rotation,
+              kdop_axes);
+      }
+    
+    return limit_space_rotation_projected;
+}
+
+static inline void apply_joint_limit(
+    quat& rotation,
+    vec3& limit_space_rotation,
+    vec3& limit_space_rotation_swing,
+    vec3& limit_space_rotation_twist,
+    vec3& limit_space_rotation_projected,
+    vec3& limit_space_rotation_projected_swing,
+    vec3& limit_space_rotation_projected_twist,
+    const quat reference_rotation,
+    const int limit_type,
+    const vec3 rectangular_limit_min,
+    const vec3 rectangular_limit_max,
+    const vec3 rectangular_limit_min_swing,
+    const vec3 rectangular_limit_max_swing,
+    const vec3 rectangular_limit_min_twist,
+    const vec3 rectangular_limit_max_twist,
+    const vec3 ellipsoid_limit_scale,
+    const vec3 ellipsoid_limit_scale_swing,
+    const vec3 ellipsoid_limit_scale_twist,
+    const slice1d<float> kdop_limit_mins,
+    const slice1d<float> kdop_limit_maxs,
+    const slice1d<float> kdop_limit_mins_swing,
+    const slice1d<float> kdop_limit_maxs_swing,
+    const slice1d<float> kdop_limit_mins_twist,
+    const slice1d<float> kdop_limit_maxs_twist,
+    const vec3 limit_position,
+    const mat3 limit_rotation,
+    const vec3 limit_position_swing,
+    const mat3 limit_rotation_swing,
+    const vec3 limit_position_twist,
+    const mat3 limit_rotation_twist,
+    const slice1d<vec3> kdop_axes,
+    const bool swing_twist,
+    const vec3 twist_axis,
+    const bool projection_enabled,
+    const bool projection_soften_enabled,
+    const float projection_soften_falloff,
+    const float projection_soften_radius)
+{
+    if (swing_twist)
+    {
+        quat reference_rotation_swing, reference_rotation_twist;
+        quat_swing_twist(
+            reference_rotation_swing,
+            reference_rotation_twist,
+            quat_inv_mul(reference_rotation, rotation),
+            twist_axis);
+            
+        limit_space_rotation_swing = quat_to_scaled_angle_axis(quat_abs(reference_rotation_swing));
+        limit_space_rotation_twist = quat_to_scaled_angle_axis(quat_abs(reference_rotation_twist));
+        
+        limit_space_rotation_projected_swing = limit_space_rotation_swing;
+        limit_space_rotation_projected_twist = limit_space_rotation_twist;
+        
+        if (projection_enabled)
+        {
+            limit_space_rotation_projected_swing = apply_limit(
+                limit_space_rotation_swing,
+                limit_type,
+                rectangular_limit_min_swing,
+                rectangular_limit_max_swing,
+                ellipsoid_limit_scale_swing,
+                kdop_limit_mins_swing,
+                kdop_limit_maxs_swing,
+                limit_position_swing,
+                limit_rotation_swing,
+                kdop_axes);
+                
+            limit_space_rotation_projected_twist = apply_limit(
+                limit_space_rotation_twist,
+                limit_type,
+                rectangular_limit_min_twist,
+                rectangular_limit_max_twist,
+                ellipsoid_limit_scale_twist,
+                kdop_limit_mins_twist,
+                kdop_limit_maxs_twist,
+                limit_position_twist,
+                limit_rotation_twist,
+                kdop_axes);
+        }
+        
+        if (projection_soften_enabled)
+        {
+            limit_space_rotation_projected_swing = projection_soften(
+                limit_space_rotation_swing,
+                limit_space_rotation_projected_swing,
+                projection_soften_falloff,
+                projection_soften_radius);
+                
+            limit_space_rotation_projected_twist = projection_soften(
+                limit_space_rotation_twist,
+                limit_space_rotation_projected_twist,
+                projection_soften_falloff,
+                projection_soften_radius);
+        }
+        
+        rotation = quat_mul(reference_rotation, quat_mul(
+            quat_from_scaled_angle_axis(limit_space_rotation_projected_swing),
+            quat_from_scaled_angle_axis(limit_space_rotation_projected_twist)));
+    }
+    else
+    {
+        limit_space_rotation = quat_to_scaled_angle_axis(
+            quat_abs(quat_inv_mul(reference_rotation, rotation)));
+            
+        limit_space_rotation_projected = limit_space_rotation;
+        
+        if (projection_enabled)
+        {
+            limit_space_rotation_projected = apply_limit(
+                limit_space_rotation,
+                limit_type,
+                rectangular_limit_min,
+                rectangular_limit_max,
+                ellipsoid_limit_scale,
+                kdop_limit_mins,
+                kdop_limit_maxs,
+                limit_position,
+                limit_rotation,
+                kdop_axes);
+        }
+        
+        if (projection_soften_enabled)
+        {
+            limit_space_rotation_projected = projection_soften(
+                limit_space_rotation,
+                limit_space_rotation_projected,
+                projection_soften_falloff,
+                projection_soften_radius);
+        }
+        
+        rotation = quat_mul(reference_rotation, quat_from_scaled_angle_axis(limit_space_rotation_projected));
+    }
+}
+
+
 
 //--------------------------------------
 
@@ -841,15 +1030,7 @@ void draw_current_limit(
         PINK);
 }
 
-
 //--------------------------------------
-
-enum
-{
-    LIMIT_TYPE_RECTANGULAR = 0,
-    LIMIT_TYPE_ELLIPSOID = 1,
-    LIMIT_TYPE_KDOP = 2,
-};
 
 void update_callback(void* args)
 {
@@ -923,11 +1104,15 @@ int main(void)
     float ik_toe_length = 0.15f;    
     vec3 ik_target = vec3(-0.5f, 0.1f, 0.0f);
 
-    bool lookat_enabled = true;
-    vec3 lookat_target = vec3(0.0f, 1.0f, 1.0f);
+    bool lookat_enabled = false;
+    float lookat_azimuth = 0.0f;
+    float lookat_altitude = 0.0f;
+    float lookat_distance = 1.0f;
+    vec3 lookat_target;
 
     bool projection_enabled = true;
-    float projection_soften_falloff = 0.1f;
+    bool projection_soften_enabled = true;
+    float projection_soften_falloff = 1.0f;
     float projection_soften_radius = 0.1f;
     
     // Pose Data
@@ -1026,27 +1211,21 @@ int main(void)
     for (int j = 0; j < db.nbones(); j++)
     {
         subsampled_limit_space_rotations[j].resize(db.nframes());
-        
         int count = subsample_limit_space_rotations(
             subsampled_limit_space_rotations[j],
             limit_space_rotations_transpose(j));
-            
         subsampled_limit_space_rotations[j].resize(count);
         
         subsampled_limit_space_rotations_swing[j].resize(db.nframes());
-        
         int count_swing = subsample_limit_space_rotations(
             subsampled_limit_space_rotations_swing[j],
-            limit_space_rotations_transpose_swing(j));
-            
+            limit_space_rotations_transpose_swing(j));   
         subsampled_limit_space_rotations_swing[j].resize(count_swing);
         
         subsampled_limit_space_rotations_twist[j].resize(db.nframes());
-        
         int count_twist = subsample_limit_space_rotations(
             subsampled_limit_space_rotations_twist[j],
             limit_space_rotations_transpose_twist(j));
-            
         subsampled_limit_space_rotations_twist[j].resize(count_twist);
     }
     
@@ -1249,7 +1428,6 @@ int main(void)
     
     float dt = 1.0f / 60.0f;
     
-    
     // Go
     
     auto update_func = [&]()
@@ -1260,13 +1438,11 @@ int main(void)
             camera_azimuth,
             camera_altitude,
             camera_distance,
-            vec3(1.5, 1, 0),
+            vec3(0.5f, 1, 0),
             (IsKeyDown(KEY_LEFT_CONTROL) && IsMouseButtonDown(0)) ? GetMouseDelta().x : 0.0f,
             (IsKeyDown(KEY_LEFT_CONTROL) && IsMouseButtonDown(0)) ? GetMouseDelta().y : 0.0f,
             dt);
   
-        //frame_index = (frame_index + 1) % db.range_stops(0);
-        
         if (reference_pose)
         {
             adjusted_bone_positions = reference_positions;
@@ -1278,7 +1454,7 @@ int main(void)
             adjusted_bone_rotations = db.bone_rotations(frame_index);
         }
         
-        if (ik_enabled)
+        if (!lookat_enabled && ik_enabled)
         {
             if (!IsKeyDown(KEY_LEFT_CONTROL) && IsMouseButtonDown(1))
             {
@@ -1315,6 +1491,50 @@ int main(void)
                 global_bone_rotations(Bone_Hips),
                 ik_max_length_buffer);
             
+            // Apply Joint Limits
+            
+            for (int bone : { Bone_RightUpLeg, Bone_RightLeg })
+            {
+                apply_joint_limit(
+                    adjusted_bone_rotations(bone),
+                    pose_limit_space_rotations(bone),
+                    pose_limit_space_rotations_swing(bone),
+                    pose_limit_space_rotations_twist(bone),
+                    pose_limit_space_rotations_projected(bone),
+                    pose_limit_space_rotations_projected_swing(bone),
+                    pose_limit_space_rotations_projected_twist(bone),
+                    reference_rotations(bone),
+                    limit_type,
+                    rectangular_limit_mins(bone),
+                    rectangular_limit_maxs(bone),
+                    rectangular_limit_mins_swing(bone),
+                    rectangular_limit_maxs_swing(bone),
+                    rectangular_limit_mins_twist(bone),
+                    rectangular_limit_maxs_twist(bone),
+                    ellipsoid_limit_scales(bone),
+                    ellipsoid_limit_scales_swing(bone),
+                    ellipsoid_limit_scales_twist(bone),
+                    kdop_limit_mins(bone),
+                    kdop_limit_maxs(bone),
+                    kdop_limit_mins_swing(bone),
+                    kdop_limit_maxs_swing(bone),
+                    kdop_limit_mins_twist(bone),
+                    kdop_limit_maxs_twist(bone),
+                    limit_positions(bone),
+                    limit_rotations(bone),
+                    limit_positions_swing(bone),
+                    limit_rotations_swing(bone),
+                    limit_positions_twist(bone),
+                    limit_rotations_twist(bone),
+                    kdop_axes,
+                    limit_swing_twist,
+                    twist_axes(bone),
+                    projection_enabled,
+                    projection_soften_enabled,
+                    projection_soften_falloff,
+                    projection_soften_radius);
+            }
+            
             // Re-compute toe, heel, and knee positions 
             global_bone_computed.zero();
             
@@ -1339,45 +1559,64 @@ int main(void)
                 global_bone_positions(Bone_RightToe),
                 ik_target);
             
-            // Re-compute toe and heel positions
-            global_bone_computed.zero();
+            // Apply Joint Limits
             
-            for (int bone : {Bone_RightToe, Bone_RightFoot})
+            for (int bone : { Bone_RightFoot })
             {
-                forward_kinematics_partial(
-                    global_bone_positions,
-                    global_bone_rotations,
-                    global_bone_computed,
-                    adjusted_bone_positions,
-                    adjusted_bone_rotations,
-                    db.bone_parents,
-                    bone);
+                apply_joint_limit(
+                    adjusted_bone_rotations(bone),
+                    pose_limit_space_rotations(bone),
+                    pose_limit_space_rotations_swing(bone),
+                    pose_limit_space_rotations_twist(bone),
+                    pose_limit_space_rotations_projected(bone),
+                    pose_limit_space_rotations_projected_swing(bone),
+                    pose_limit_space_rotations_projected_twist(bone),
+                    reference_rotations(bone),
+                    limit_type,
+                    rectangular_limit_mins(bone),
+                    rectangular_limit_maxs(bone),
+                    rectangular_limit_mins_swing(bone),
+                    rectangular_limit_maxs_swing(bone),
+                    rectangular_limit_mins_twist(bone),
+                    rectangular_limit_maxs_twist(bone),
+                    ellipsoid_limit_scales(bone),
+                    ellipsoid_limit_scales_swing(bone),
+                    ellipsoid_limit_scales_twist(bone),
+                    kdop_limit_mins(bone),
+                    kdop_limit_maxs(bone),
+                    kdop_limit_mins_swing(bone),
+                    kdop_limit_maxs_swing(bone),
+                    kdop_limit_mins_twist(bone),
+                    kdop_limit_maxs_twist(bone),
+                    limit_positions(bone),
+                    limit_rotations(bone),
+                    limit_positions_swing(bone),
+                    limit_rotations_swing(bone),
+                    limit_positions_twist(bone),
+                    limit_rotations_twist(bone),
+                    kdop_axes,
+                    limit_swing_twist,
+                    twist_axes(bone),
+                    projection_enabled,
+                    projection_soften_enabled,
+                    projection_soften_falloff,
+                    projection_soften_radius);
             }
-            
-            // Rotate toe bone so that the end of the toe 
-            // does not intersect with the ground
-            vec3 toe_end_curr = quat_mul_vec3(
-                global_bone_rotations(Bone_RightToe), vec3(ik_toe_length, 0.0f, 0.0f)) + 
-                global_bone_positions(Bone_RightToe);
-                
-            vec3 toe_end_targ = toe_end_curr;
-            toe_end_targ.y = maxf(toe_end_targ.y, ik_foot_height);
-            
-            ik_look_at(
-                adjusted_bone_rotations(Bone_RightToe),
-                global_bone_rotations(Bone_RightFoot),
-                global_bone_rotations(Bone_RightToe),
-                global_bone_positions(Bone_RightToe),
-                toe_end_curr,
-                toe_end_targ);
         }
         else if (lookat_enabled)
         {
             if (!IsKeyDown(KEY_LEFT_CONTROL) && IsMouseButtonDown(1))
             {
-                quat rotation_azimuth = quat_from_angle_axis(camera_azimuth, vec3(0, 1, 0));
-                lookat_target = lookat_target + dt * 0.1f * quat_mul_vec3(rotation_azimuth, vec3(GetMouseDelta().x, -GetMouseDelta().y, 0.0f));
+                lookat_azimuth += dt * 0.1f * GetMouseDelta().x;
+                lookat_altitude += dt * 0.1f * -GetMouseDelta().y;
             }
+          
+            quat lookat_rotation_azimuth = quat_from_angle_axis(lookat_azimuth, vec3(0, 1, 0));
+            vec3 lookat_position = quat_mul_vec3(lookat_rotation_azimuth, vec3(0, 0, lookat_distance));
+            vec3 lookat_axis = normalize(cross(lookat_position, vec3(0, 1, 0)));
+            quat lookat_rotation_altitude = quat_from_angle_axis(lookat_altitude, lookat_axis);
+            
+            lookat_target = vec3(0.0f, 1.5f, 0.0f) + quat_mul_vec3(lookat_rotation_altitude, lookat_position);
             
             global_bone_computed.zero();
             
@@ -1392,41 +1631,83 @@ int main(void)
             
             vec3 lookat_direction = normalize(lookat_target - global_bone_positions(Bone_Head));
             
-            float spine_scale = 2.0f;
-            float look_angle_azimuth = spine_scale * lookat_direction.x;
-            float look_angle_altitude = spine_scale * -lookat_direction.y;
+            float spine_scale = 1.5f;
             
             adjusted_bone_rotations(Bone_Spine) = quat_mul(
                 adjusted_bone_rotations(Bone_Spine),
-                quat_from_angle_axis(0.1f * look_angle_azimuth, vec3(1, 0, 0)));
+                quat_from_angle_axis(0.1f * spine_scale * lookat_azimuth, vec3(1, 0, 0)));
             
             adjusted_bone_rotations(Bone_Spine1) = quat_mul(
                 adjusted_bone_rotations(Bone_Spine1),
-                quat_from_angle_axis(0.2f * look_angle_azimuth, vec3(1, 0, 0)));
+                quat_from_angle_axis(0.2f * spine_scale * lookat_azimuth, vec3(1, 0, 0)));
             
             adjusted_bone_rotations(Bone_Spine2) = quat_mul(
                 adjusted_bone_rotations(Bone_Spine2),
-                quat_from_angle_axis(0.3f * look_angle_azimuth, vec3(1, 0, 0)));
+                quat_from_angle_axis(0.3f * spine_scale * lookat_azimuth, vec3(1, 0, 0)));
             
             adjusted_bone_rotations(Bone_Neck) = quat_mul(
                 adjusted_bone_rotations(Bone_Neck),
-                quat_from_angle_axis(0.4f * look_angle_azimuth, vec3(1, 0, 0)));
+                quat_from_angle_axis(0.4f * spine_scale * lookat_azimuth, vec3(1, 0, 0)));
             
             adjusted_bone_rotations(Bone_Spine) = quat_mul(
                 adjusted_bone_rotations(Bone_Spine),
-                quat_from_angle_axis(0.1f * look_angle_altitude, vec3(0, 0, 1)));
+                quat_from_angle_axis(0.1f * spine_scale * lookat_altitude, vec3(0, 0, -1)));
             
             adjusted_bone_rotations(Bone_Spine1) = quat_mul(
                 adjusted_bone_rotations(Bone_Spine1),
-                quat_from_angle_axis(0.2f * look_angle_altitude, vec3(0, 0, 1)));
+                quat_from_angle_axis(0.2f * spine_scale * lookat_altitude, vec3(0, 0, -1)));
             
             adjusted_bone_rotations(Bone_Spine2) = quat_mul(
                 adjusted_bone_rotations(Bone_Spine2),
-                quat_from_angle_axis(0.3f * look_angle_altitude, vec3(0, 0, 1)));
+                quat_from_angle_axis(0.3f * spine_scale * lookat_altitude, vec3(0, 0, -1)));
             
             adjusted_bone_rotations(Bone_Neck) = quat_mul(
                 adjusted_bone_rotations(Bone_Neck),
-                quat_from_angle_axis(0.4f * look_angle_altitude, vec3(0, 0, 1)));
+                quat_from_angle_axis(0.4f * spine_scale * lookat_altitude, vec3(0, 0, -1)));
+            
+            // Apply Joint Limits
+            
+            for (int bone : { Bone_Spine, Bone_Spine1, Bone_Spine2, Bone_Neck })
+            {
+                apply_joint_limit(
+                    adjusted_bone_rotations(bone),
+                    pose_limit_space_rotations(bone),
+                    pose_limit_space_rotations_swing(bone),
+                    pose_limit_space_rotations_twist(bone),
+                    pose_limit_space_rotations_projected(bone),
+                    pose_limit_space_rotations_projected_swing(bone),
+                    pose_limit_space_rotations_projected_twist(bone),
+                    reference_rotations(bone),
+                    limit_type,
+                    rectangular_limit_mins(bone),
+                    rectangular_limit_maxs(bone),
+                    rectangular_limit_mins_swing(bone),
+                    rectangular_limit_maxs_swing(bone),
+                    rectangular_limit_mins_twist(bone),
+                    rectangular_limit_maxs_twist(bone),
+                    ellipsoid_limit_scales(bone),
+                    ellipsoid_limit_scales_swing(bone),
+                    ellipsoid_limit_scales_twist(bone),
+                    kdop_limit_mins(bone),
+                    kdop_limit_maxs(bone),
+                    kdop_limit_mins_swing(bone),
+                    kdop_limit_maxs_swing(bone),
+                    kdop_limit_mins_twist(bone),
+                    kdop_limit_maxs_twist(bone),
+                    limit_positions(bone),
+                    limit_rotations(bone),
+                    limit_positions_swing(bone),
+                    limit_rotations_swing(bone),
+                    limit_positions_twist(bone),
+                    limit_rotations_twist(bone),
+                    kdop_axes,
+                    limit_swing_twist,
+                    twist_axes(bone),
+                    projection_enabled,
+                    projection_soften_enabled,
+                    projection_soften_falloff,
+                    projection_soften_radius);
+            }
             
             global_bone_computed.zero();
             
@@ -1456,208 +1737,97 @@ int main(void)
                 global_bone_positions(Bone_Head),
                 head_lookat_curr,
                 head_lookat_targ);
+                
+            // Apply Joint Limits
+            
+            for (int bone : { Bone_Head })
+            {
+                apply_joint_limit(
+                    adjusted_bone_rotations(bone),
+                    pose_limit_space_rotations(bone),
+                    pose_limit_space_rotations_swing(bone),
+                    pose_limit_space_rotations_twist(bone),
+                    pose_limit_space_rotations_projected(bone),
+                    pose_limit_space_rotations_projected_swing(bone),
+                    pose_limit_space_rotations_projected_twist(bone),
+                    reference_rotations(bone),
+                    limit_type,
+                    rectangular_limit_mins(bone),
+                    rectangular_limit_maxs(bone),
+                    rectangular_limit_mins_swing(bone),
+                    rectangular_limit_maxs_swing(bone),
+                    rectangular_limit_mins_twist(bone),
+                    rectangular_limit_maxs_twist(bone),
+                    ellipsoid_limit_scales(bone),
+                    ellipsoid_limit_scales_swing(bone),
+                    ellipsoid_limit_scales_twist(bone),
+                    kdop_limit_mins(bone),
+                    kdop_limit_maxs(bone),
+                    kdop_limit_mins_swing(bone),
+                    kdop_limit_maxs_swing(bone),
+                    kdop_limit_mins_twist(bone),
+                    kdop_limit_maxs_twist(bone),
+                    limit_positions(bone),
+                    limit_rotations(bone),
+                    limit_positions_swing(bone),
+                    limit_rotations_swing(bone),
+                    limit_positions_twist(bone),
+                    limit_rotations_twist(bone),
+                    kdop_axes,
+                    limit_swing_twist,
+                    twist_axes(bone),
+                    projection_enabled,
+                    projection_soften_enabled,
+                    projection_soften_falloff,
+                    projection_soften_radius);
+            }
+                
         }
         else
         {
             adjusted_bone_rotations(joint_index) = quat_mul(
                 adjusted_bone_rotations(joint_index),
                 quat_from_euler_xyz(rotation_x, rotation_y, rotation_z));
-        }
-  
-        // Reference Space
-        
-        for (int i = 0; i < pose_reference_space_rotations.size; i++)
-        {
-            pose_reference_space_rotations(i) = quat_inv_mul(
-                reference_rotations(i), 
-                adjusted_bone_rotations(i));
                 
-            quat_swing_twist(
-                pose_reference_space_rotations_swing(i), 
-                pose_reference_space_rotations_twist(i),
-                pose_reference_space_rotations(i),
-                twist_axes(i));
-        }
-
-        // Unroll
-        
-        for (int i = 0; i < pose_reference_space_rotations.size; i++)
-        {
-            pose_reference_space_rotations(i) = quat_abs(pose_reference_space_rotations(i));
-            pose_reference_space_rotations_swing(i) = quat_abs(pose_reference_space_rotations_swing(i));
-            pose_reference_space_rotations_twist(i) = quat_abs(pose_reference_space_rotations_twist(i));
-        }
-        
-        // Limit Space
-        
-        for (int i = 0; i < pose_reference_space_rotations.size; i++)
-        {
-            pose_limit_space_rotations(i) = quat_to_scaled_angle_axis(pose_reference_space_rotations(i));
-            pose_limit_space_rotations_swing(i) = quat_to_scaled_angle_axis(pose_reference_space_rotations_swing(i));
-            pose_limit_space_rotations_twist(i) = quat_to_scaled_angle_axis(pose_reference_space_rotations_twist(i));
-        }
-        
-        // Project
-        
-        if (limit_swing_twist)
-        {
-            if (limit_type == LIMIT_TYPE_RECTANGULAR)
-            {
-                for (int i = 0; i < db.nbones(); i++)
-                {
-                    pose_limit_space_rotations_projected_swing(i) = apply_rectangular_limit(
-                        pose_limit_space_rotations_swing(i),
-                        rectangular_limit_mins_swing(i),
-                        rectangular_limit_maxs_swing(i),
-                        limit_positions_swing(i),
-                        limit_rotations_swing(i));
-                }
+            apply_joint_limit(
+                adjusted_bone_rotations(joint_index),
+                pose_limit_space_rotations(joint_index),
+                pose_limit_space_rotations_swing(joint_index),
+                pose_limit_space_rotations_twist(joint_index),
+                pose_limit_space_rotations_projected(joint_index),
+                pose_limit_space_rotations_projected_swing(joint_index),
+                pose_limit_space_rotations_projected_twist(joint_index),
+                reference_rotations(joint_index),
+                limit_type,
+                rectangular_limit_mins(joint_index),
+                rectangular_limit_maxs(joint_index),
+                rectangular_limit_mins_swing(joint_index),
+                rectangular_limit_maxs_swing(joint_index),
+                rectangular_limit_mins_twist(joint_index),
+                rectangular_limit_maxs_twist(joint_index),
+                ellipsoid_limit_scales(joint_index),
+                ellipsoid_limit_scales_swing(joint_index),
+                ellipsoid_limit_scales_twist(joint_index),
+                kdop_limit_mins(joint_index),
+                kdop_limit_maxs(joint_index),
+                kdop_limit_mins_swing(joint_index),
+                kdop_limit_maxs_swing(joint_index),
+                kdop_limit_mins_twist(joint_index),
+                kdop_limit_maxs_twist(joint_index),
+                limit_positions(joint_index),
+                limit_rotations(joint_index),
+                limit_positions_swing(joint_index),
+                limit_rotations_swing(joint_index),
+                limit_positions_twist(joint_index),
+                limit_rotations_twist(joint_index),
+                kdop_axes,
+                limit_swing_twist,
+                twist_axes(joint_index),
+                projection_enabled,
+                projection_soften_enabled,
+                projection_soften_falloff,
+                projection_soften_radius);
                 
-                for (int i = 0; i < db.nbones(); i++)
-                {
-                    pose_limit_space_rotations_projected_twist(i) = apply_rectangular_limit(
-                        pose_limit_space_rotations_twist(i),
-                        rectangular_limit_mins_twist(i),
-                        rectangular_limit_maxs_twist(i),
-                        limit_positions_twist(i),
-                        limit_rotations_twist(i));
-                }
-            }
-            else if (limit_type == LIMIT_TYPE_ELLIPSOID)
-            {
-                for (int i = 0; i < db.nbones(); i++)
-                {
-                    pose_limit_space_rotations_projected_swing(i) = apply_ellipsoid_limit(
-                        pose_limit_space_rotations_swing(i),
-                        ellipsoid_limit_scales_swing(i),
-                        limit_positions_swing(i),
-                        limit_rotations_swing(i));
-                }
-                
-                for (int i = 0; i < db.nbones(); i++)
-                {
-                    pose_limit_space_rotations_projected_twist(i) = apply_ellipsoid_limit(
-                        pose_limit_space_rotations_twist(i),
-                        ellipsoid_limit_scales_twist(i),
-                        limit_positions_twist(i),
-                        limit_rotations_twist(i));
-                }
-            }
-            else if (limit_type == LIMIT_TYPE_KDOP)
-            {
-                for (int i = 0; i < db.nbones(); i++)
-                {
-                    pose_limit_space_rotations_projected_swing(i) = apply_kdop_limit(
-                        pose_limit_space_rotations_swing(i),
-                        kdop_limit_mins_swing(i),
-                        kdop_limit_maxs_swing(i),
-                        limit_positions_swing(i),
-                        limit_rotations_swing(i),
-                        kdop_axes);
-                }
-                
-                for (int i = 0; i < db.nbones(); i++)
-                {
-                    pose_limit_space_rotations_projected_twist(i) = apply_kdop_limit(
-                        pose_limit_space_rotations_twist(i),
-                        kdop_limit_mins_twist(i),
-                        kdop_limit_maxs_twist(i),
-                        limit_positions_twist(i),
-                        limit_rotations_twist(i),
-                        kdop_axes);
-                }
-            }
-            
-            for (int i = 0; i < db.nbones(); i++)
-            {
-                pose_limit_space_rotations_projected_swing(i) = projection_soften(
-                    pose_limit_space_rotations_swing(i),
-                    pose_limit_space_rotations_projected_swing(i),
-                    projection_soften_falloff,
-                    projection_soften_radius);
-              
-                pose_limit_space_rotations_projected_twist(i) = projection_soften(
-                    pose_limit_space_rotations_twist(i),
-                    pose_limit_space_rotations_projected_twist(i),
-                    projection_soften_falloff,
-                    projection_soften_radius);
-            }
-        }
-        else
-        {
-            if (limit_type == LIMIT_TYPE_RECTANGULAR)
-            {
-                for (int i = 0; i < db.nbones(); i++)
-                {
-                    pose_limit_space_rotations_projected(i) = apply_rectangular_limit(
-                        pose_limit_space_rotations(i),
-                        rectangular_limit_mins(i),
-                        rectangular_limit_maxs(i),
-                        limit_positions(i),
-                        limit_rotations(i));
-                }
-            }
-            else if (limit_type == LIMIT_TYPE_ELLIPSOID)
-            {
-                for (int i = 0; i < db.nbones(); i++)
-                {
-                    pose_limit_space_rotations_projected(i) = apply_ellipsoid_limit(
-                        pose_limit_space_rotations(i),
-                        ellipsoid_limit_scales(i),
-                        limit_positions(i),
-                        limit_rotations(i));
-                }
-            }
-            else if (limit_type == LIMIT_TYPE_KDOP)
-            {
-                for (int i = 0; i < db.nbones(); i++)
-                {
-                    pose_limit_space_rotations_projected(i) = apply_kdop_limit(
-                        pose_limit_space_rotations(i),
-                        kdop_limit_mins(i),
-                        kdop_limit_maxs(i),
-                        limit_positions(i),
-                        limit_rotations(i),
-                        kdop_axes);
-                }
-            }
-            
-            for (int i = 0; i < db.nbones(); i++)
-            {
-                pose_limit_space_rotations_projected(i) = projection_soften(
-                    pose_limit_space_rotations(i),
-                    pose_limit_space_rotations_projected(i),
-                    projection_soften_falloff,
-                    projection_soften_radius);
-            }
-        }
-        
-        // De-project
-        
-        if (projection_enabled)
-        {   
-            if (limit_swing_twist)
-            {
-                // Don't adjust root joint
-                for (int i = 1; i < db.nbones(); i++)
-                {
-                    adjusted_bone_rotations(i) = quat_mul(
-                        reference_rotations(i), 
-                        quat_mul(
-                            quat_from_scaled_angle_axis(pose_limit_space_rotations_projected_swing(i)),
-                            quat_from_scaled_angle_axis(pose_limit_space_rotations_projected_twist(i))));
-                }
-            }
-            else
-            {
-                // Don't adjust root joint
-                for (int i = 1; i < db.nbones(); i++)
-                {
-                    adjusted_bone_rotations(i) = quat_mul(
-                        reference_rotations(i), 
-                        quat_from_scaled_angle_axis(pose_limit_space_rotations_projected(i)));
-                }
-            }
         }
         
         // Done!
@@ -1678,7 +1848,7 @@ int main(void)
         
         // Draw Joint Limit Data
         
-        if (ik_enabled)
+        if (!lookat_enabled && ik_enabled)
         {
             DrawSphereWires(
                 to_Vector3(ik_target),
@@ -1698,12 +1868,12 @@ int main(void)
                 VIOLET);
         }
         
-        float scale = 0.25f;
+        float scale = 0.15f;
         
         if (limit_swing_twist)
         {
-            vec3 space_offset_swing = vec3(1.25f, 1.0f, 0.0f);
-            vec3 space_offset_twist = vec3(3.0f, 1.0f, 0.0f);
+            vec3 space_offset_swing = vec3(1.0f, 1.0f, 0.0f);
+            vec3 space_offset_twist = vec3(2.0f, 1.0f, 0.0f);
     
             draw_current_limit(
                 pose_limit_space_rotations_projected_swing(joint_index),
@@ -1793,7 +1963,7 @@ int main(void)
         }
         else
         {
-            vec3 space_offset = vec3(1.5f, 1.0f, 0.0f);
+            vec3 space_offset = vec3(1.0f, 1.0f, 0.0f);
             
             draw_current_limit(
                 pose_limit_space_rotations_projected(joint_index),
@@ -1873,68 +2043,96 @@ int main(void)
         
         int frame_index_prev = frame_index;
         int joint_index_prev = joint_index;
+        
+        //---------
+        
+        float ui_hei_anim = 20;
+        
+        GuiGroupBox((Rectangle){ 20, ui_hei_anim, 1120, 70 }, "animation");
 
         frame_index = (int)GuiSliderBar(
-            (Rectangle){ 100, 20, 1000, 20 }, 
+            (Rectangle){ 100, ui_hei_anim + 10, 1000, 20 }, 
             "frame index", 
             TextFormat("%4i", frame_index),
             frame_index,
             0, db.range_stops(0));
-                
+        
+        reference_pose = GuiCheckBox(
+            (Rectangle){ 100, ui_hei_anim + 40, 20, 20 }, 
+            "reference pose", 
+            reference_pose);
+        
+        //---------
+        
+        float ui_hei_rot = 100;
+        
+        GuiGroupBox((Rectangle){ 20, ui_hei_rot, 360, 130 }, "rotation");
+        
         joint_index = (int)GuiSliderBar(
-            (Rectangle){ 100, 50, 300, 20 }, 
-            "joint index", 
+            (Rectangle){ 100, ui_hei_rot + 10, 200, 20 }, 
+            "joint", 
             TextFormat("%s", BoneNames[joint_index]),
             joint_index,
             1, db.nbones() - 1);
 
         rotation_x = GuiSliderBar(
-            (Rectangle){ 100, 80, 200, 20 }, 
+            (Rectangle){ 100, ui_hei_rot + 40, 200, 20 }, 
             "rotation x", 
             TextFormat("%3.2f", rotation_x),
             rotation_x,
             -PIf, PIf);  
 
         rotation_y = GuiSliderBar(
-            (Rectangle){ 100, 110, 200, 20 }, 
+            (Rectangle){ 100, ui_hei_rot + 70, 200, 20 }, 
             "rotation y", 
             TextFormat("%3.2f", rotation_y),
             rotation_y,
             -PIf, PIf);  
             
         rotation_z = GuiSliderBar(
-            (Rectangle){ 100, 140, 200, 20 }, 
+            (Rectangle){ 100, ui_hei_rot + 100, 200, 20 }, 
             "rotation z", 
             TextFormat("%3.2f", rotation_z),
             rotation_z,
             -PIf, PIf);  
         
-        reference_pose = GuiCheckBox(
-            (Rectangle){ 100, 170, 20, 20 }, 
-            "reference pose toggle", 
-            reference_pose);
+        //---------
+        
+        float ui_hei_proj = 240;
+        
+        GuiGroupBox((Rectangle){ 20, ui_hei_proj, 260, 190 }, "projection");
         
         projection_enabled = GuiCheckBox(
-            (Rectangle){ 100, 200, 20, 20 }, 
-            "projection enabled", 
+            (Rectangle){ 120, ui_hei_proj + 10, 20, 20 }, 
+            "enabled", 
             projection_enabled);
         
+        projection_soften_enabled = GuiCheckBox(
+            (Rectangle){ 120, ui_hei_proj + 40, 20, 20 }, 
+            "soften", 
+            projection_soften_enabled);
+        
         projection_soften_falloff = GuiSliderBar(
-            (Rectangle){ 100, 230, 200, 20 }, 
+            (Rectangle){ 120, ui_hei_proj + 70, 120, 20 }, 
             "soften falloff", 
             TextFormat("%3.2f", projection_soften_falloff),
             projection_soften_falloff,
-            0.0f, 1.0f);  
+            0.0f, 5.0f);  
         
         projection_soften_radius = GuiSliderBar(
-            (Rectangle){ 100, 230, 200, 20 }, 
+            (Rectangle){ 120, ui_hei_proj + 100, 120, 20 }, 
             "soften radius", 
             TextFormat("%3.2f", projection_soften_radius),
             projection_soften_radius,
             0.0f, 1.0f);  
         
+        limit_swing_twist = GuiCheckBox(
+            (Rectangle){ 120, ui_hei_proj + 130, 20, 20 }, 
+            "swing twist", 
+            limit_swing_twist);
+        
         if (GuiDropdownBox(
-            (Rectangle){ 100, 260, 100, 20 }, 
+            (Rectangle){ 120, ui_hei_proj + 160, 120, 20 }, 
             "Rectangular;Ellipsoid;KDop",
             &limit_type,
             limit_type_edit))
@@ -1942,10 +2140,27 @@ int main(void)
             limit_type_edit = !limit_type_edit;
         }
         
-        limit_swing_twist = GuiCheckBox(
-            (Rectangle){ 220, 260, 20, 20 }, 
-            "swing twist decomposition", 
-            limit_swing_twist);
+        //---------
+
+        float ui_hei_ik = 440;
+        
+        GuiGroupBox((Rectangle){ 20, ui_hei_ik, 260, 40 }, "inverse kinematics");
+        
+        ik_enabled = GuiCheckBox(
+            (Rectangle){ 120, ui_hei_ik + 10, 20, 20 }, 
+            "enabled", 
+            ik_enabled);
+      
+        //---------
+      
+        float ui_hei_lookat = 490;
+        
+        GuiGroupBox((Rectangle){ 20, ui_hei_lookat, 260, 40 }, "look-at");
+        
+        lookat_enabled = GuiCheckBox(
+            (Rectangle){ 120, ui_hei_lookat + 10, 20, 20 }, 
+            "enabled", 
+            lookat_enabled);
       
         EndDrawing();
 

@@ -185,7 +185,7 @@ static inline void mat3_svd_piter(
 
     // Second Eigen Vector
     mat3 B1 = A;
-    vec3 g1 = normalize(cross(vec3(0, 0, 1), v0), eps);
+    vec3 g1 = normalize(cross(vec3(0, 0, 1), v0));
     B1 = B1 - s0 * mat3_outer(u0, v0);
     vec3 u1 = mat3_svd_dominant_eigen(B1, g1, iterations, eps);
     vec3 v1_unnormalized = mat3_transpose_mul_vec3(A, u1);
@@ -194,13 +194,12 @@ static inline void mat3_svd_piter(
     
     // Third Eigen Vector
     mat3 B2 = A;
-    vec3 g2 = normalize(cross(v0, v1));
+    vec3 v2 = normalize(cross(v0, v1));
     B2 = B2 - s0 * mat3_outer(u0, v0);
     B2 = B2 - s1 * mat3_outer(u1, v1);
-    vec3 u2 = mat3_svd_dominant_eigen(B2, g2, iterations, eps);
+    vec3 u2 = mat3_svd_dominant_eigen(B2, v2, iterations, eps);
     vec3 v2_unnormalized = mat3_transpose_mul_vec3(A, u2);
     float s2 = length(v2_unnormalized);
-    vec3 v2 = s2 < eps ? g2 : normalize(v2_unnormalized);
     
     // Done
     U = mat3(u0, u1, u2);
