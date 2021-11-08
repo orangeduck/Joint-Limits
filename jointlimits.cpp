@@ -1053,7 +1053,7 @@ int main(void)
 
     Camera3D camera = { 0 };
     camera.position = (Vector3){ 2.0f, 3.0f, 5.0f };
-    camera.target = (Vector3){ 1.5f, 1.0f, 0.0f };
+    camera.target = (Vector3){ -0.5f, 1.0f, 0.0f };
     camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
     camera.fovy = 45.0f;
     camera.projection = CAMERA_PERSPECTIVE;
@@ -1102,7 +1102,7 @@ int main(void)
     float ik_max_length_buffer = 0.015f;
     float ik_foot_height = 0.03f;
     float ik_toe_length = 0.15f;    
-    vec3 ik_target = vec3(-0.5f, 0.1f, 0.0f);
+    vec3 ik_target = vec3(-0.25f, 0.1f, 0.0f);
 
     bool lookat_enabled = false;
     float lookat_azimuth = 0.0f;
@@ -1438,7 +1438,7 @@ int main(void)
             camera_azimuth,
             camera_altitude,
             camera_distance,
-            vec3(0.5f, 1, 0),
+            vec3(-0.75f, 1, 0),
             (IsKeyDown(KEY_LEFT_CONTROL) && IsMouseButtonDown(0)) ? GetMouseDelta().x : 0.0f,
             (IsKeyDown(KEY_LEFT_CONTROL) && IsMouseButtonDown(0)) ? GetMouseDelta().y : 0.0f,
             dt);
@@ -1872,8 +1872,8 @@ int main(void)
         
         if (limit_swing_twist)
         {
-            vec3 space_offset_swing = vec3(1.0f, 1.0f, 0.0f);
-            vec3 space_offset_twist = vec3(2.0f, 1.0f, 0.0f);
+            vec3 space_offset_swing = vec3(-1.0f, 1.0f, 0.0f);
+            vec3 space_offset_twist = vec3(-2.0f, 1.0f, 0.0f);
     
             draw_current_limit(
                 pose_limit_space_rotations_projected_swing(joint_index),
@@ -1963,7 +1963,7 @@ int main(void)
         }
         else
         {
-            vec3 space_offset = vec3(1.0f, 1.0f, 0.0f);
+            vec3 space_offset = vec3(-1.0f, 1.0f, 0.0f);
             
             draw_current_limit(
                 pose_limit_space_rotations_projected(joint_index),
@@ -2046,12 +2046,22 @@ int main(void)
         
         //---------
         
+        float ui_ctrl_hei = 20;
+        
+        GuiGroupBox((Rectangle){ 1010, ui_ctrl_hei, 250, 140 }, "controls");
+        
+        GuiLabel((Rectangle){ 1030, ui_ctrl_hei +  10, 200, 20 }, "Ctrl + Left Click - Move Camera");
+        GuiLabel((Rectangle){ 1030, ui_ctrl_hei +  30, 200, 20 }, "Mouse Wheel - Zoom");
+        GuiLabel((Rectangle){ 1030, ui_ctrl_hei +  50, 200, 20 }, "Right Click - Move target");
+        
+        //---------
+        
         float ui_hei_anim = 20;
         
-        GuiGroupBox((Rectangle){ 20, ui_hei_anim, 1120, 70 }, "animation");
+        GuiGroupBox((Rectangle){ 20, ui_hei_anim, 920, 70 }, "animation");
 
         frame_index = (int)GuiSliderBar(
-            (Rectangle){ 100, ui_hei_anim + 10, 1000, 20 }, 
+            (Rectangle){ 100, ui_hei_anim + 10, 800, 20 }, 
             "frame index", 
             TextFormat("%4i", frame_index),
             frame_index,
