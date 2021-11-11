@@ -140,6 +140,24 @@ void orbit_camera_update(
 
 //--------------------------------------
 
+static inline void quat_unroll_inplace(slice1d<quat> rotations)
+{
+    // Make initial rotation be the "short way around"
+    rotations(0) = quat_abs(rotations(0));
+    
+    // Loop over following rotations
+    for (int i = 1; i < rotations.size; i++)
+    {
+        // If more than 180 degrees away from previous frame 
+        // rotation then flip to opposite hemisphere
+        if (quat_dot(rotations(i), rotations(i - 1)) < 0.0f)
+        {
+            rotations(i) = -rotations(i);
+        }
+    }
+}
+
+
 static inline void quat_unroll_ranges_inplace(
     slice2d<quat> rotations,
     const slice1d<int> range_starts,
@@ -168,7 +186,6 @@ static inline void quat_unroll_ranges_inplace(
 static inline void compute_twist_axes(
     slice1d<vec3> twist_axes,
     const slice1d<vec3> reference_positions,
-    const slice1d<quat> reference_rotations,
     const slice1d<int> bone_parents,
     const vec3 default_twist_axis = vec3(1, 0, 0),
     const float eps = 1e-8f)
@@ -177,6 +194,7 @@ static inline void compute_twist_axes(
     
     for (int i = 0; i < bone_parents.size; i++)
     {
+        // Compute average extension of child bones
         for (int j = 0; j < bone_parents.size; j++)
         {
             if (bone_parents(j) == i)
@@ -185,6 +203,7 @@ static inline void compute_twist_axes(
             }
         }
 
+        // If children found normalize, otherwise use default axis
         if (length(twist_axes(i)) > eps)
         {
             twist_axes(i) = normalize(twist_axes(i));
@@ -196,20 +215,30 @@ static inline void compute_twist_axes(
     }
 }
 
-static inline int subsample_limit_space_rotations(
-    slice1d<vec3> subsampled_limit_space_rotations,
-    slice1d<vec3> limit_space_rotations,
-    const float threshold = 0.05f)
+// Subsamples a set of `points`. Returns the 
+// number of subsampled points. Output array 
+// `subsampled` must be large enough for the 
+// case where all points are returned. 
+static inline int subsample_naive(
+    slice1d<vec3> subsampled,
+    const slice1d<vec3> points,
+    const float distance_threshold = 0.05f)
 {
     int count = 0;
-    subsampled_limit_space_rotations(count) = limit_space_rotations(count);
     
-    for (int i = 1; i < limit_space_rotations.size; i++)
+    // Include first point
+    subsampled(count) = points(0);
+    count++;
+    
+    // Loop over other points
+    for (int i = 1; i < points.size; i++)
     {
+        // Include if no other subsampled point is within
+        // `distance_threshold` of this point
         bool include = true;
         for (int j = 0; j < count; j++)
         {
-            if (length(subsampled_limit_space_rotations(j) - limit_space_rotations(i)) < threshold)
+            if (length(subsampled(j) - points(i)) < distance_threshold)
             {
                 include = false;
                 break;
@@ -218,11 +247,13 @@ static inline int subsample_limit_space_rotations(
         
         if (include)
         {
-            subsampled_limit_space_rotations(count) = limit_space_rotations(i);
+            // Add point and increment count
+            subsampled(count) = points(i);
             count++;
         }
     }
     
+    // Return number of subsampled points
     return count;
 }
 
@@ -261,27 +292,31 @@ static inline void fit_limit_orientations(
     mat3_svd_piter(U, s, V, inner_product);
     
     limit_rotation = mat3_transpose(V);
-    
-    // Recompute position as midpoint
-    vec3 limit_min = vec3(FLT_MAX, FLT_MAX, FLT_MAX);
-    vec3 limit_max = vec3(FLT_MIN, FLT_MIN, FLT_MIN);
-    
-    for (int i = 0; i < limit_space_rotations.size; i++)
-    {
-        vec3 limit_point = mat3_transpose_mul_vec3(
-            limit_rotation,
-            limit_space_rotations(i) - limit_position);
-      
-        limit_min = min(limit_min, limit_point);
-        limit_max = max(limit_max, limit_point);
-    }
-    
-    // Re-project midpoint into non-rotated space
-    vec3 limit_midpoint = limit_min + (limit_max - limit_min) / 2.0f;
-    limit_position = mat3_mul_vec3(limit_rotation, limit_midpoint) + limit_position;
 }
 
 //--------------------------------------
+
+static inline void fit_rectangular_limits_basic(
+    vec3& limit_min,
+    vec3& limit_max,
+    const slice1d<vec3> limit_space_rotations,
+    const float padding = 0.05f)
+{
+    // Set limits to opposite float min and max
+    limit_min = vec3(FLT_MAX, FLT_MAX, FLT_MAX);
+    limit_max = vec3(FLT_MIN, FLT_MIN, FLT_MIN);
+  
+    for (int i = 0; i < limit_space_rotations.size; i++)
+    {
+        // Find min and max on each dimension
+        limit_min = min(limit_min, limit_space_rotations(i));
+        limit_max = max(limit_max, limit_space_rotations(i));
+    }
+    
+    // Add some padding if desired to expand limit a little
+    limit_min -= vec3(padding, padding, padding);
+    limit_max += vec3(padding, padding, padding);
+}
 
 static inline void fit_rectangular_limits(
     vec3& limit_min,
@@ -296,6 +331,7 @@ static inline void fit_rectangular_limits(
   
     for (int i = 0; i < limit_space_rotations.size; i++)
     {
+        // Inverse transform point using position and rotation
         vec3 limit_point = mat3_transpose_mul_vec3(
             limit_rotation,
             limit_space_rotations(i) - limit_position);
@@ -304,8 +340,8 @@ static inline void fit_rectangular_limits(
         limit_max = max(limit_max, limit_point);
     }
     
-    limit_min = limit_min - vec3(padding, padding, padding);
-    limit_max = limit_max + vec3(padding, padding, padding);
+    limit_min -= vec3(padding, padding, padding);
+    limit_max += vec3(padding, padding, padding);
 }
 
 static inline void fit_ellipsoid_limits(
@@ -351,23 +387,27 @@ static inline void fit_kdop_limits(
     const slice1d<vec3> limit_kdop_axes,
     const float padding = 0.05f)
 {
+    // Set limits to opposite float min and max
     limit_mins.set(FLT_MAX);
     limit_maxs.set(FLT_MIN);
   
     for (int i = 0; i < limit_space_rotations.size; i++)
     {
+        // Inverse transform point using position and rotation
         vec3 limit_point = mat3_transpose_mul_vec3(
             limit_rotation,
             limit_space_rotations(i) - limit_position);
         
         for (int k = 0; k < limit_kdop_axes.size; k++)
-        {
+        {   
+            // Find how much point extends on each kdop axis
             float limit_point_proj = dot(limit_kdop_axes(k), limit_point);
             limit_mins(k) = minf(limit_mins(k), limit_point_proj);
             limit_maxs(k) = maxf(limit_maxs(k), limit_point_proj);
         }
     }
     
+    // Add some padding if desired to expand limit a little
     for (int k = 0; k < limit_kdop_axes.size; k++)
     {
         limit_mins(k) -= padding;
@@ -377,6 +417,14 @@ static inline void fit_kdop_limits(
 
 //--------------------------------------
 
+static inline vec3 apply_rectangular_limit_basic(
+    const vec3 limit_space_rotation,
+    const vec3 limit_min,
+    const vec3 limit_max)
+{
+    return clamp(limit_space_rotation, limit_min, limit_max);
+}
+
 static inline vec3 apply_rectangular_limit(
     const vec3 limit_space_rotation,
     const vec3 limit_min,
@@ -384,12 +432,15 @@ static inline vec3 apply_rectangular_limit(
     const vec3 limit_position,
     const mat3 limit_rotation)
 {
+    // Inverse transform point using position and rotation
     vec3 limit_point = mat3_transpose_mul_vec3(
         limit_rotation,
         limit_space_rotation - limit_position);
         
+    // Clamp point
     limit_point = clamp(limit_point, limit_min, limit_max);
     
+    // Transform point using position and rotation
     return mat3_mul_vec3(limit_rotation, limit_point) + limit_position;
 }
 
@@ -401,10 +452,12 @@ static inline vec3 apply_ellipsoid_limit(
     const int iterations = 8,
     const float eps = 1e-5f)
 {
+    // Inverse transform point using position and rotation
     vec3 limit_point = mat3_transpose_mul_vec3(
         limit_rotation,
         limit_space_rotation - limit_position);
     
+    // If already inside ellipsoid just return
     if (length(limit_point / limit_scale) <= 1.0f)
     {
         return limit_space_rotation;
@@ -412,7 +465,9 @@ static inline vec3 apply_ellipsoid_limit(
     
     vec3 ss = limit_scale * limit_scale + eps;
 
-    float ss_mid = (ss.y < ss.x) ? (ss.z < ss.x ? ss.x : ss.z) : (ss.z < ss.y ? ss.y : ss.z);
+    float ss_mid = (ss.y < ss.x) ? 
+        (ss.z < ss.x ? ss.x : ss.z) : 
+        (ss.z < ss.y ? ss.y : ss.z);
     
     float hmin = sqrtf(dot(limit_point * limit_point, ss * ss) / ss_mid) - ss_mid;
     hmin = maxf(hmin, (fabs(limit_point.x) - limit_scale.x) * limit_scale.x);
@@ -426,7 +481,8 @@ static inline vec3 apply_ellipsoid_limit(
 
     float h = hmin;
     float hprev;
-
+    
+    // Iterations of Newton-Raphson
     for (int i = 0; i < iterations; i++)
     {
         vec3 wa = limit_point / (ss + h);
@@ -446,9 +502,11 @@ static inline vec3 apply_ellipsoid_limit(
             break;
         }
     }
-
+    
+    // Project onto surface
     limit_point = limit_point * ss / (ss + h);
     
+    // Transform point using position and rotation
     return mat3_mul_vec3(limit_rotation, limit_point) + limit_position;
 }
 
@@ -459,26 +517,29 @@ static inline vec3 apply_kdop_limit(
     const vec3 limit_position,
     const mat3 limit_rotation,
     const slice1d<vec3> kdop_axes)
-{
+{   
+    // Inverse transform point using position and rotation
     vec3 limit_point = mat3_transpose_mul_vec3(
         limit_rotation,
         limit_space_rotation - limit_position);
         
     for (int k = 0; k < kdop_axes.size; k++)
-    {
+    {   
+        // Clamp point along given axes
         vec3 t0 = limit_point - limit_mins(k) * kdop_axes(k);
         vec3 t1 = limit_point - limit_maxs(k) * kdop_axes(k);
-        limit_point = limit_point - minf(dot(t0, kdop_axes(k)), 0.0f) * kdop_axes(k);
-        limit_point = limit_point - maxf(dot(t1, kdop_axes(k)), 0.0f) * kdop_axes(k);
+        limit_point -= limit_point - minf(dot(t0, kdop_axes(k)), 0.0f) * kdop_axes(k);
+        limit_point -= limit_point - maxf(dot(t1, kdop_axes(k)), 0.0f) * kdop_axes(k);
     }
-
+    
+    // Transform point using position and rotation
     return mat3_mul_vec3(limit_rotation, limit_point) + limit_position;
 }
 
 static inline vec3 projection_soften(
     const vec3 original_position,
     const vec3 projected_position,
-    const float falloff = 0.1f,
+    const float falloff = 1.0f,
     const float radius = 0.1f,
     const float eps = 1e-5f)
 {
@@ -486,11 +547,16 @@ static inline vec3 projection_soften(
     
     if (distance > eps)
     {
+        // Compute how much softening to apply up to `radius`
         float softening = tanhf(falloff * distance) * radius;
-        return projected_position + normalize(original_position - projected_position) * softening;
+        
+        // Add softening toward original position
+        return projected_position + 
+            normalize(original_position - projected_position) * softening;
     }
     else
     {
+        // No projection applied
         return projected_position;
     }
 }
@@ -1141,7 +1207,6 @@ int main(void)
     compute_twist_axes(
         twist_axes,
         reference_positions,
-        reference_rotations,
         db.bone_parents);
     
     // Reference Space 
@@ -1211,19 +1276,19 @@ int main(void)
     for (int j = 0; j < db.nbones(); j++)
     {
         subsampled_limit_space_rotations[j].resize(db.nframes());
-        int count = subsample_limit_space_rotations(
+        int count = subsample_naive(
             subsampled_limit_space_rotations[j],
             limit_space_rotations_transpose(j));
         subsampled_limit_space_rotations[j].resize(count);
         
         subsampled_limit_space_rotations_swing[j].resize(db.nframes());
-        int count_swing = subsample_limit_space_rotations(
+        int count_swing = subsample_naive(
             subsampled_limit_space_rotations_swing[j],
             limit_space_rotations_transpose_swing(j));   
         subsampled_limit_space_rotations_swing[j].resize(count_swing);
         
         subsampled_limit_space_rotations_twist[j].resize(db.nframes());
-        int count_twist = subsample_limit_space_rotations(
+        int count_twist = subsample_naive(
             subsampled_limit_space_rotations_twist[j],
             limit_space_rotations_transpose_twist(j));
         subsampled_limit_space_rotations_twist[j].resize(count_twist);
@@ -2048,7 +2113,7 @@ int main(void)
         
         float ui_ctrl_hei = 20;
         
-        GuiGroupBox((Rectangle){ 1010, ui_ctrl_hei, 250, 140 }, "controls");
+        GuiGroupBox((Rectangle){ 1010, ui_ctrl_hei, 250, 80 }, "controls");
         
         GuiLabel((Rectangle){ 1030, ui_ctrl_hei +  10, 200, 20 }, "Ctrl + Left Click - Move Camera");
         GuiLabel((Rectangle){ 1030, ui_ctrl_hei +  30, 200, 20 }, "Mouse Wheel - Zoom");

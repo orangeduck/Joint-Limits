@@ -166,7 +166,6 @@ static inline vec3 mat3_svd_dominant_eigen(
     return v;
 }
 
-// https://towardsdatascience.com/simple-svd-algorithms-13291ad2eef2
 static inline void mat3_svd_piter(
     mat3& U,
     vec3& s,
@@ -198,8 +197,7 @@ static inline void mat3_svd_piter(
     B2 = B2 - s0 * mat3_outer(u0, v0);
     B2 = B2 - s1 * mat3_outer(u1, v1);
     vec3 u2 = mat3_svd_dominant_eigen(B2, v2, iterations, eps);
-    vec3 v2_unnormalized = mat3_transpose_mul_vec3(A, u2);
-    float s2 = length(v2_unnormalized);
+    float s2 = length(mat3_transpose_mul_vec3(A, u2));
     
     // Done
     U = mat3(u0, u1, u2);
