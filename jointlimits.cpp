@@ -528,8 +528,8 @@ static inline vec3 apply_kdop_limit(
         // Clamp point along given axes
         vec3 t0 = limit_point - limit_mins(k) * kdop_axes(k);
         vec3 t1 = limit_point - limit_maxs(k) * kdop_axes(k);
-        limit_point -= limit_point - minf(dot(t0, kdop_axes(k)), 0.0f) * kdop_axes(k);
-        limit_point -= limit_point - maxf(dot(t1, kdop_axes(k)), 0.0f) * kdop_axes(k);
+        limit_point -= minf(dot(t0, kdop_axes(k)), 0.0f) * kdop_axes(k);
+        limit_point -= maxf(dot(t1, kdop_axes(k)), 0.0f) * kdop_axes(k);
     }
     
     // Transform point using position and rotation

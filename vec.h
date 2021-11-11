@@ -114,9 +114,9 @@ struct vec3
     
     inline vec3 operator-=(vec3 v)
     {
-        this->x += v.x;
-        this->y += v.y;
-        this->z += v.z;
+        this->x -= v.x;
+        this->y -= v.y;
+        this->z -= v.z;
         return *this;
     }
 };
