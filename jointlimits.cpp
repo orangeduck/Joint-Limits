@@ -157,7 +157,9 @@ static inline void quat_unroll_inplace(slice1d<quat> rotations)
     }
 }
 
-
+// This is similar to the previous function but we loop over 
+// the ranges specified in the database to ensure we are 
+// unrolling each animation individually
 static inline void quat_unroll_ranges_inplace(
     slice2d<quat> rotations,
     const slice1d<int> range_starts,
@@ -613,6 +615,12 @@ static inline vec3 apply_limit(
     return limit_space_rotation_projected;
 }
 
+// This function is a bit absurd... but only 
+// because we have so many potential options and 
+// different ways of doing the joint limits. 
+// In reality it makes more sense to break this 
+// into separate functions for each approach we
+// might want to use.
 static inline void apply_joint_limit(
     quat& rotation,
     vec3& limit_space_rotation,
@@ -1150,36 +1158,42 @@ int main(void)
     database db;
     database_load(db, "./resources/database.bin");
     
-    // Controls
-    
     bool reference_pose = true;
     int frame_index = db.range_starts(0);
+    
+    // Controls
+    
     int joint_index = 1;
-
-    bool limit_swing_twist = false;
-    bool limit_type_edit = false;
-    int limit_type = LIMIT_TYPE_RECTANGULAR;
-
     float rotation_x = 0.0f;
     float rotation_y = 0.0f;
     float rotation_z = 0.0f;
-
+  
+    // Projection
+  
+    bool limit_swing_twist = false;
+    bool limit_type_edit = false;
+    int limit_type = LIMIT_TYPE_RECTANGULAR;
+  
+    bool projection_enabled = true;
+    bool projection_soften_enabled = true;
+    float projection_soften_falloff = 1.0f;
+    float projection_soften_radius = 0.1f;
+  
+    // IK
+  
     bool ik_enabled = false;
     float ik_max_length_buffer = 0.015f;
     float ik_foot_height = 0.03f;
     float ik_toe_length = 0.15f;    
     vec3 ik_target = vec3(-0.25f, 0.1f, 0.0f);
-
+    
+    // Lookat 
+    
     bool lookat_enabled = false;
     float lookat_azimuth = 0.0f;
     float lookat_altitude = 0.0f;
     float lookat_distance = 1.0f;
     vec3 lookat_target;
-
-    bool projection_enabled = true;
-    bool projection_soften_enabled = true;
-    float projection_soften_falloff = 1.0f;
-    float projection_soften_radius = 0.1f;
     
     // Pose Data
     
@@ -1490,14 +1504,13 @@ int main(void)
     array1d<vec3> pose_limit_space_rotations_projected = pose_limit_space_rotations;
     array1d<vec3> pose_limit_space_rotations_projected_swing = pose_limit_space_rotations_swing;
     array1d<vec3> pose_limit_space_rotations_projected_twist = pose_limit_space_rotations_twist;
-    
-    float dt = 1.0f / 60.0f;
-    
+        
     // Go
     
     auto update_func = [&]()
     {
-
+        float dt = 1.0f / 60.0f;
+        
         orbit_camera_update(
             camera, 
             camera_azimuth,
@@ -1669,7 +1682,9 @@ int main(void)
             }
         }
         else if (lookat_enabled)
-        {
+        {   
+            // Compute look-at target
+      
             if (!IsKeyDown(KEY_LEFT_CONTROL) && IsMouseButtonDown(1))
             {
                 lookat_azimuth += dt * 0.1f * GetMouseDelta().x;
@@ -1683,6 +1698,8 @@ int main(void)
             
             lookat_target = vec3(0.0f, 1.5f, 0.0f) + quat_mul_vec3(lookat_rotation_altitude, lookat_position);
             
+            // Compute FK for head Joint
+            
             global_bone_computed.zero();
             
             forward_kinematics_partial(
@@ -1693,6 +1710,8 @@ int main(void)
                 adjusted_bone_rotations,
                 db.bone_parents,
                 Bone_Head);
+            
+            // Rotate Spine Joints
             
             vec3 lookat_direction = normalize(lookat_target - global_bone_positions(Bone_Head));
             
@@ -1774,6 +1793,8 @@ int main(void)
                     projection_soften_radius);
             }
             
+            // Re-Compute FK for head and neck
+            
             global_bone_computed.zero();
             
             for (int bone : {Bone_Head, Bone_Neck})
@@ -1787,6 +1808,8 @@ int main(void)
                     db.bone_parents,
                     bone);
             }
+            
+            // Basic Look-at toward target
             
             vec3 head_lookat_curr = quat_mul_vec3(
                 global_bone_rotations(Bone_Head), vec3(0.0f, 1.0f, 0.0f)) + 
@@ -1849,11 +1872,15 @@ int main(void)
                 
         }
         else
-        {
+        {   
+            // Adjust selected bone
+      
             adjusted_bone_rotations(joint_index) = quat_mul(
                 adjusted_bone_rotations(joint_index),
                 quat_from_euler_xyz(rotation_x, rotation_y, rotation_z));
-                
+            
+            // Apply joint limits
+            
             apply_joint_limit(
                 adjusted_bone_rotations(joint_index),
                 pose_limit_space_rotations(joint_index),
@@ -1911,7 +1938,7 @@ int main(void)
         
         BeginMode3D(camera);
         
-        // Draw Joint Limit Data
+        // Draw Targets
         
         if (!lookat_enabled && ik_enabled)
         {
@@ -1932,6 +1959,8 @@ int main(void)
                 0.025, 4, 8,
                 VIOLET);
         }
+        
+        // Draw Joint Limit Data
         
         float scale = 0.15f;
         
