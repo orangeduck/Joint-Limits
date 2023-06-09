@@ -134,8 +134,6 @@ void orbit_camera_update(
 
     cam.target = (Vector3){ target.x, target.y, target.z };
     cam.position = (Vector3){ eye.x, eye.y, eye.z };
-    
-    UpdateCamera(&cam);
 }
 
 //--------------------------------------
@@ -1484,6 +1482,21 @@ int main(void)
             kdop_axes);
     }
     
+    // Save
+    
+    FILE* f = fopen("resources/limits_kdop.bin", "wb");
+    assert(f != NULL);
+    
+    array1d_write(reference_positions, f);
+    array1d_write(reference_rotations, f);
+    array1d_write(limit_positions, f);
+    array1d_write(limit_rotations, f);
+    array1d_write(kdop_axes, f);
+    array2d_write(kdop_limit_mins, f);
+    array2d_write(kdop_limit_maxs, f);
+    
+    fclose(f);
+    
     // Local Adjustment Data
   
     array1d<quat> pose_reference_space_rotations = reference_space_rotations(frame_index);
@@ -2154,17 +2167,21 @@ int main(void)
         
         GuiGroupBox((Rectangle){ 20, ui_hei_anim, 920, 70 }, "animation");
 
-        frame_index = (int)GuiSliderBar(
+        float float_frame_index = frame_index;
+
+        GuiSliderBar(
             (Rectangle){ 100, ui_hei_anim + 10, 800, 20 }, 
             "frame index", 
             TextFormat("%4i", frame_index),
-            frame_index,
+            &float_frame_index,
             0, db.range_stops(0));
         
-        reference_pose = GuiCheckBox(
+        frame_index = (int)float_frame_index;
+        
+        GuiCheckBox(
             (Rectangle){ 100, ui_hei_anim + 40, 20, 20 }, 
             "reference pose", 
-            reference_pose);
+            &reference_pose);
         
         //---------
         
@@ -2172,32 +2189,36 @@ int main(void)
         
         GuiGroupBox((Rectangle){ 20, ui_hei_rot, 360, 130 }, "rotation");
         
-        joint_index = (int)GuiSliderBar(
+        float float_joint_index = joint_index;
+        
+        GuiSliderBar(
             (Rectangle){ 100, ui_hei_rot + 10, 200, 20 }, 
             "joint", 
             TextFormat("%s", BoneNames[joint_index]),
-            joint_index,
+            &float_joint_index,
             1, db.nbones() - 1);
-
-        rotation_x = GuiSliderBar(
+        
+        joint_index = (int)float_joint_index;
+        
+        GuiSliderBar(
             (Rectangle){ 100, ui_hei_rot + 40, 200, 20 }, 
             "rotation x", 
             TextFormat("%3.2f", rotation_x),
-            rotation_x,
+            &rotation_x,
             -PIf, PIf);  
 
-        rotation_y = GuiSliderBar(
+        GuiSliderBar(
             (Rectangle){ 100, ui_hei_rot + 70, 200, 20 }, 
             "rotation y", 
             TextFormat("%3.2f", rotation_y),
-            rotation_y,
+            &rotation_y,
             -PIf, PIf);  
             
-        rotation_z = GuiSliderBar(
+        GuiSliderBar(
             (Rectangle){ 100, ui_hei_rot + 100, 200, 20 }, 
             "rotation z", 
             TextFormat("%3.2f", rotation_z),
-            rotation_z,
+            &rotation_z,
             -PIf, PIf);  
         
         //---------
@@ -2206,34 +2227,34 @@ int main(void)
         
         GuiGroupBox((Rectangle){ 20, ui_hei_proj, 260, 190 }, "projection");
         
-        projection_enabled = GuiCheckBox(
+        GuiCheckBox(
             (Rectangle){ 120, ui_hei_proj + 10, 20, 20 }, 
             "enabled", 
-            projection_enabled);
+            &projection_enabled);
         
-        projection_soften_enabled = GuiCheckBox(
+        GuiCheckBox(
             (Rectangle){ 120, ui_hei_proj + 40, 20, 20 }, 
             "soften", 
-            projection_soften_enabled);
+            &projection_soften_enabled);
         
-        projection_soften_falloff = GuiSliderBar(
+        GuiSliderBar(
             (Rectangle){ 120, ui_hei_proj + 70, 120, 20 }, 
             "soften falloff", 
             TextFormat("%3.2f", projection_soften_falloff),
-            projection_soften_falloff,
+            &projection_soften_falloff,
             0.0f, 5.0f);  
         
-        projection_soften_radius = GuiSliderBar(
+        GuiSliderBar(
             (Rectangle){ 120, ui_hei_proj + 100, 120, 20 }, 
             "soften radius", 
             TextFormat("%3.2f", projection_soften_radius),
-            projection_soften_radius,
+            &projection_soften_radius,
             0.0f, 1.0f);  
         
-        limit_swing_twist = GuiCheckBox(
+        GuiCheckBox(
             (Rectangle){ 120, ui_hei_proj + 130, 20, 20 }, 
             "swing twist", 
-            limit_swing_twist);
+            &limit_swing_twist);
         
         if (GuiDropdownBox(
             (Rectangle){ 120, ui_hei_proj + 160, 120, 20 }, 
@@ -2250,10 +2271,10 @@ int main(void)
         
         GuiGroupBox((Rectangle){ 20, ui_hei_ik, 260, 40 }, "inverse kinematics");
         
-        ik_enabled = GuiCheckBox(
+        GuiCheckBox(
             (Rectangle){ 120, ui_hei_ik + 10, 20, 20 }, 
             "enabled", 
-            ik_enabled);
+            &ik_enabled);
       
         //---------
       
@@ -2261,10 +2282,10 @@ int main(void)
         
         GuiGroupBox((Rectangle){ 20, ui_hei_lookat, 260, 40 }, "look-at");
         
-        lookat_enabled = GuiCheckBox(
+        GuiCheckBox(
             (Rectangle){ 120, ui_hei_lookat + 10, 20, 20 }, 
             "enabled", 
-            lookat_enabled);
+            &lookat_enabled);
       
         EndDrawing();
 
