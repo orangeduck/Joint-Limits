@@ -27,7 +27,7 @@ static inline vec2 operator+(vec2 v, vec2 w)
 
 static inline vec2 operator-(float s, vec2 v)
 {
-    return vec2(v.x - s, v.y - s);
+    return vec2(s - v.x, s - v.y);
 }
 
 static inline vec2 operator-(vec2 v, float s)
