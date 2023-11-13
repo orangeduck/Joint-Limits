@@ -138,7 +138,7 @@ static inline vec3 operator+(vec3 v, vec3 w)
 
 static inline vec3 operator-(float s, vec3 v)
 {
-    return vec3(v.x - s, v.y - s, v.z - s);
+    return vec3(s - v.x, s - v.y, s - v.z);
 }
 
 static inline vec3 operator-(vec3 v, float s)
