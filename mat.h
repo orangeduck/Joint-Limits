@@ -34,6 +34,14 @@ struct mat3
           zx, zy, zz;
 };
 
+static inline mat3 mat3_from_cols(vec3 c0, vec3 c1, vec3 c2)
+{
+    return mat3(
+        c0.x, c1.x, c2.x,
+        c0.y, c1.y, c2.y,
+        c0.z, c1.z, c2.z);
+}    
+
 static inline mat3 operator+(mat3 m, mat3 n)
 {
     return mat3(
@@ -58,6 +66,14 @@ static inline mat3 operator/(mat3 m, float v)
         m.zx / v, m.zy / v, m.zz / v);
 }
 
+static inline mat3 operator/(float v, mat3 m)
+{
+    return mat3(
+        v / m.xx, v / m.xy, v / m.xz,
+        v / m.yx, v / m.yy, v / m.yz,
+        v / m.zx, v / m.zy, v / m.zz);
+}
+
 static inline mat3 operator*(float v, mat3 m)
 {
     return mat3(
@@ -72,6 +88,14 @@ static inline mat3 mat3_zero()
         0.0f, 0.0f, 0.0f,
         0.0f, 0.0f, 0.0f,
         0.0f, 0.0f, 0.0f);
+}
+
+static inline mat3 mat3_eye()
+{
+    return mat3(
+        1.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 1.0f);
 }
 
 static inline mat3 mat3_transpose(mat3 m)
@@ -204,3 +228,135 @@ static inline void mat3_svd_piter(
     s = vec3(s0, s1, s2);
     V = mat3(v0, v1, v2);
 }
+
+float mat3_trace(const mat3 M)
+{
+    return M.xx + M.yy + M.zz;
+}
+
+float mat3_det(const mat3 M)
+{
+    return  M.xx * (M.yy * M.zz - M.zy * M.yz) -
+            M.xy * (M.yx * M.zz - M.yz * M.zx) +
+            M.xz * (M.yx * M.zy - M.yy * M.zx);
+}
+
+// solve cubic equation of form x^3 + a*x^2 + b*x + c
+// outputs roots into x and returns the number of roots
+int cubic(float x[3], float a, float b, float c)
+{
+    float q = (a*a - 3.0f*b) / 9.0f;
+	float r = (2.0f*a*a*a - 9.0f*a*b + 27.0f*c) / 54.0f;
+    float d = q*q*q - r*r;
+    
+    if (d > 0.0f) 
+    {
+        // Three Real Roots
+        float t = acosf(clampf(r / sqrtf(q*q*q), -1.0f, 1.0f));
+        x[0] = -2.0f * sqrtf(q) * cosf((t             ) / 3.0f) - a / 3.0f;
+        x[1] = -2.0f * sqrtf(q) * cosf((t + 2.0f * PIf) / 3.0f) - a / 3.0f;
+        x[2] = -2.0f * sqrtf(q) * cosf((t + 4.0f * PIf) / 3.0f) - a / 3.0f;
+        return 3;
+    }
+    else
+    {
+        // One Real Root
+        float e = powf(sqrtf(-d) + fabs(r), 1.0f / 3.0f);
+        e = r > 0.0f ? -e : e;
+        x[0] = (e + q / e) - a / 3.0f;
+        return 1;
+    }
+}
+
+float mat3_f_trace_cg(const float A, const float B, const float C, const float eps=1e-10f)
+{
+    // Compute polynomial coefficients
+    float b = -2.0f * A;
+    float c = -8.0f * C;
+    float d = A*A - B;
+    
+    // Compute cubic resolvent coefficients 
+    float a3 = -b;
+	float b3 = -4.0f*d;
+	float c3 = -c*c + 4.0f*b*d;
+	float x3[3];
+	int num = cubic(x3, a3, b3, c3);
+
+    // Find root with largest magnitude
+	float y = x3[0];
+	if (num > 1 && fabs(x3[1]) > fabs(y)) { y = x3[1]; }
+	if (num > 2 && fabs(x3[2]) > fabs(y)) { y = x3[2]; }
+
+    // Find quadratic for trace root
+    float q2, p2;
+	float D = y*y - 4.0f*d;
+    
+	if (fabs(D) < eps)
+	{
+		D = -4.0f * (b - y);
+		q2 = y * 0.5f;
+        p2 = fabs(D) < eps ? 0.0f : (-sqrtf(D)) * 0.5f;
+	}
+	else
+	{
+		float q1 = (y + sqrtf(D)) * 0.5f;
+		q2 = (y - sqrtf(D)) * 0.5f;
+		p2 = c / (q1 - q2);
+	}
+
+    // Find trace root
+	D = p2*p2 - 4.0f*q2;
+    return D < 0.0f ? -p2 * 0.5f : (-p2 + sqrtf(D)) * 0.5f;
+}
+
+// Partial derivative of matrix determinant
+mat3 mat3_ddet(const mat3 M)
+{
+    vec3 da = cross(M.c1(), M.c2());
+    vec3 db = cross(M.c2(), M.c0());
+    vec3 dc = cross(M.c0(), M.c1());
+    return mat3_from_cols(da, db, dc);
+}
+
+// The squared frobenius norm
+float mat3_frobenius_squared(const mat3 M)
+{
+    return M.xx*M.xx + M.xy*M.xy + M.xz*M.xz +
+           M.yx*M.yx + M.xy*M.yy + M.yz*M.yz +
+           M.zx*M.zx + M.xy*M.zy + M.zz*M.zz;
+}
+
+void mat3_polar(mat3& R, mat3& S, const mat3 M)
+{
+    float A = mat3_trace(mat3_transpose_mul(M, M));
+    float B = mat3_frobenius_squared(mat3_transpose_mul(M, M));
+    float C = mat3_det(M);
+    
+    mat3 dAdM = 2.0f * M;
+    mat3 dBdM = 4.0f * mat3_mul(M, mat3_transpose_mul(M, M));
+    mat3 dCdM = mat3_ddet(M);
+    
+    float f = mat3_f_trace_cg(A, B, C);
+    float denom = 4.0f*f*f*f - 4.0f*A*f - 8.0f*C;
+    
+    float dfdA = (2.0f*f*f + 2.0f*A) / denom;
+    float dfdB = -2.0f / denom;
+    float dfdC = (8.0f*f) / denom;
+    
+    R = dfdA*dAdM + dfdB*dBdM + dfdC*dCdM;
+    S = mat3_transpose_mul(R, M); 
+}
+
+void mat3_svd(mat3& U, vec3& s, mat3& V, const mat3 M)
+{
+    mat3 R, S;
+    mat3_polar(R, S, M);
+    
+    V = mat3_transpose(R);
+    mat3 E = mat3_mul(mat3_mul(R, S), V);
+    s = vec3(E.xx, E.yy, E.zz);
+    U = mat3_mul(mat3_mul(M, R), (1.0f / E));
+}
+
+
+
