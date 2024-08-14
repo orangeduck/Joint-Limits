@@ -367,7 +367,7 @@ void mat3_polar(mat3& R, mat3& S, vec3& s, const mat3 M)
     if (fabsf(denom) < 1e-10f)
     {
         R = mat3_eye();
-        S = mat3_transpose_mul(R, M); 
+        S = M; 
         return;
     }        
     
