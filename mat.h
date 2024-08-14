@@ -1,5 +1,6 @@
 #pragma once
 #include "vec.h"
+#include <assert.h>
 
 struct mat3
 {
@@ -106,6 +107,15 @@ static inline mat3 mat3_transpose(mat3 m)
         m.xz, m.yz, m.zz);
 }
 
+static inline mat3 mat3_abs(mat3 m)
+{
+    return mat3(
+        fabsf(m.xx), fabsf(m.xy), fabsf(m.xz),
+        fabsf(m.yx), fabsf(m.yy), fabsf(m.yz),
+        fabsf(m.zx), fabsf(m.zy), fabsf(m.zz));
+}
+
+
 static inline mat3 mat3_mul(mat3 m, mat3 n)
 {
   return mat3(
@@ -177,7 +187,7 @@ static inline vec3 mat3_svd_dominant_eigen(
         float ev_new = (mat3_mul_vec3(A, v_new) / v_new).x;
         
         // Break if converged
-        if (fabs(ev - ev_new) < eps)
+        if (fabsf(ev - ev_new) < eps)
         {
             break;
         }
@@ -190,6 +200,7 @@ static inline vec3 mat3_svd_dominant_eigen(
     return v;
 }
 
+// Note: This returns V^T rather than V
 static inline void mat3_svd_piter(
     mat3& U,
     vec3& s,
@@ -205,7 +216,7 @@ static inline void mat3_svd_piter(
     vec3 v0_unnormalized = mat3_transpose_mul_vec3(A, u0);
     float s0 = length(v0_unnormalized);
     vec3 v0 = s0 < eps ? g0 : normalize(v0_unnormalized);
-
+    
     // Second Eigen Vector
     mat3 B1 = A;
     vec3 g1 = normalize(cross(vec3(0, 0, 1), v0));
@@ -229,6 +240,11 @@ static inline void mat3_svd_piter(
     V = mat3(v0, v1, v2);
 }
 
+vec3 mat3_diag(const mat3 M)
+{
+    return vec3(M.xx, M.yy, M.zz);
+}
+
 float mat3_trace(const mat3 M)
 {
     return M.xx + M.yy + M.zz;
@@ -236,80 +252,15 @@ float mat3_trace(const mat3 M)
 
 float mat3_det(const mat3 M)
 {
-    return  M.xx * (M.yy * M.zz - M.zy * M.yz) -
-            M.xy * (M.yx * M.zz - M.yz * M.zx) +
-            M.xz * (M.yx * M.zy - M.yy * M.zx);
+    return (M.xx * M.yy * M.zz) + 
+           (M.xy * M.yz * M.zx) + 
+           (M.xz * M.yx * M.zy) -
+           (M.xz * M.yy * M.zx) - 
+           (M.xy * M.yx * M.zz) - 
+           (M.xx * M.yz * M.zy);
 }
 
-// solve cubic equation of form x^3 + a*x^2 + b*x + c
-// outputs roots into x and returns the number of roots
-int cubic(float x[3], float a, float b, float c)
-{
-    float q = (a*a - 3.0f*b) / 9.0f;
-	float r = (2.0f*a*a*a - 9.0f*a*b + 27.0f*c) / 54.0f;
-    float d = q*q*q - r*r;
-    
-    if (d > 0.0f) 
-    {
-        // Three Real Roots
-        float t = acosf(clampf(r / sqrtf(q*q*q), -1.0f, 1.0f));
-        x[0] = -2.0f * sqrtf(q) * cosf((t             ) / 3.0f) - a / 3.0f;
-        x[1] = -2.0f * sqrtf(q) * cosf((t + 2.0f * PIf) / 3.0f) - a / 3.0f;
-        x[2] = -2.0f * sqrtf(q) * cosf((t + 4.0f * PIf) / 3.0f) - a / 3.0f;
-        return 3;
-    }
-    else
-    {
-        // One Real Root
-        float e = powf(sqrtf(-d) + fabs(r), 1.0f / 3.0f);
-        e = r > 0.0f ? -e : e;
-        x[0] = (e + q / e) - a / 3.0f;
-        return 1;
-    }
-}
-
-float mat3_f_trace_cg(const float A, const float B, const float C, const float eps=1e-10f)
-{
-    // Compute polynomial coefficients
-    float b = -2.0f * A;
-    float c = -8.0f * C;
-    float d = A*A - B;
-    
-    // Compute cubic resolvent coefficients 
-    float a3 = -b;
-	float b3 = -4.0f*d;
-	float c3 = -c*c + 4.0f*b*d;
-	float x3[3];
-	int num = cubic(x3, a3, b3, c3);
-
-    // Find root with largest magnitude
-	float y = x3[0];
-	if (num > 1 && fabs(x3[1]) > fabs(y)) { y = x3[1]; }
-	if (num > 2 && fabs(x3[2]) > fabs(y)) { y = x3[2]; }
-
-    // Find quadratic for trace root
-    float q2, p2;
-	float D = y*y - 4.0f*d;
-    
-	if (fabs(D) < eps)
-	{
-		D = -4.0f * (b - y);
-		q2 = y * 0.5f;
-        p2 = fabs(D) < eps ? 0.0f : (-sqrtf(D)) * 0.5f;
-	}
-	else
-	{
-		float q1 = (y + sqrtf(D)) * 0.5f;
-		q2 = (y - sqrtf(D)) * 0.5f;
-		p2 = c / (q1 - q2);
-	}
-
-    // Find trace root
-	D = p2*p2 - 4.0f*q2;
-    return D < 0.0f ? -p2 * 0.5f : (-p2 + sqrtf(D)) * 0.5f;
-}
-
-// Partial derivative of matrix determinant
+// Partial derivative of matrix determinant (adj(M)^T)
 mat3 mat3_ddet(const mat3 M)
 {
     vec3 da = cross(M.c1(), M.c2());
@@ -318,45 +269,299 @@ mat3 mat3_ddet(const mat3 M)
     return mat3_from_cols(da, db, dc);
 }
 
-// The squared frobenius norm
+// The squared frobenius norm of a matrix (|| M ||^2)
 float mat3_frobenius_squared(const mat3 M)
 {
     return M.xx*M.xx + M.xy*M.xy + M.xz*M.xz +
-           M.yx*M.yx + M.xy*M.yy + M.yz*M.yz +
-           M.zx*M.zx + M.xy*M.zy + M.zz*M.zz;
+           M.yx*M.yx + M.yy*M.yy + M.yz*M.yz +
+           M.zx*M.zx + M.zy*M.zy + M.zz*M.zz;
 }
 
-void mat3_polar(mat3& R, mat3& S, const mat3 M)
+// returns the real root with the largest magnitude which solves the cubic 
+// equation of form x^3 + a*x^2 + b*x + c
+static inline float cubic_max_abs_root(float a, float b, float c)
 {
-    float A = mat3_trace(mat3_transpose_mul(M, M));
+    float q = (a*a - 3.0f*b) / 9.0f;
+    float r = (2.0f*a*a*a - 9.0f*a*b + 27.0f*c) / 54.0f;
+    
+    if (r*r < q*q*q) 
+    {
+        // Three Real Roots
+        float t = acosf(clampf(r / sqrtf(q*q*q), -1.0f, 1.0f));
+        float x0 = -2.0f * sqrtf(q) * cosf((t             ) / 3.0f) - a / 3.0f;
+        float x1 = -2.0f * sqrtf(q) * cosf((t + 2.0f * PIf) / 3.0f) - a / 3.0f;
+        float x2 = -2.0f * sqrtf(q) * cosf((t - 2.0f * PIf) / 3.0f) - a / 3.0f;
+        return fabsf(x0) > fabsf(x1) && fabsf(x0) > fabsf(x2) ? x0 :
+               fabsf(x1) > fabsf(x2) && fabsf(x1) > fabsf(x0) ? x1 : x2;
+    }
+    else
+    {
+        // One Real Root
+        float e = powf(sqrtf(r*r - q*q*q) + fabsf(r), 1.0f / 3.0f);
+        e = r > 0.0f ? -e : e;
+        float f = e == 0.0f ? 0.0f : q / e;
+        return (e + f) - a / 3.0f;
+    }
+}
+
+// Computes tr(M^T R) and the singular values from A, B and C
+float mat3_f_trace_cg(vec3& s, float A, float B, float C)
+{
+    // Compute polynomial coefficients
+    float b = -2.0f * A;
+    float c = -8.0f * C;
+    float d = -A*A + 2.0f * B;
+    
+    // Find root with largest magnitude using cubic resolvent coefficients 
+    float y = cubic_max_abs_root(-b, -4.0f*d, -c*c + 4.0f*b*d);
+
+    // Find quadratics for each pair of quartic roots
+    float q1, p1, q2, p2;
+    
+    float D = y*y - 4.0f*d;
+    if (D < 1e-10f)
+    {
+        float D2 = maxf(-4.0f * (b - y), 0.0f);
+        q1 = q2 = y * 0.5f;
+        p1 = +sqrtf(D2) * 0.5f;            
+        p2 = -sqrtf(D2) * 0.5f;            
+    }
+    else
+    {
+        q1 = (y + sqrtf(D)) * 0.5f;
+        q2 = (y - sqrtf(D)) * 0.5f;
+        p1 = (-c) / (q1 - q2);
+        p2 = (+c) / (q1 - q2);
+    }
+
+    // Find first two roots
+    float D01 = maxf(p1*p1 - 4.0f*q1, 0.0f);
+    float x0 = (-p1 + sqrtf(D01)) * 0.5f;
+    float x1 = (-p1 - sqrtf(D01)) * 0.5f;
+    
+    // Find second two roots
+    float D23 = maxf(p2*p2 - 4.0f*q2, 0.0f);
+    float x2 = (-p2 - sqrtf(D23)) * 0.5f;
+    float x3 = (-p2 + sqrtf(D23)) * 0.5f;
+    
+    // Singular Values
+    s.x = (x0 + x3) * 0.5f;
+    s.y = (x1 + x3) * 0.5f;
+    s.z = (x2 + x3) * 0.5f;
+    
+    // return trace root
+    return x3;
+}
+
+// Computes the polar decomposition and singular values of a matrix M using the 
+// closed-form solution
+void mat3_polar(mat3& R, mat3& S, vec3& s, const mat3 M)
+{
+    float A = mat3_frobenius_squared(M);
     float B = mat3_frobenius_squared(mat3_transpose_mul(M, M));
     float C = mat3_det(M);
     
-    mat3 dAdM = 2.0f * M;
-    mat3 dBdM = 4.0f * mat3_mul(M, mat3_transpose_mul(M, M));
-    mat3 dCdM = mat3_ddet(M);
-    
-    float f = mat3_f_trace_cg(A, B, C);
+    float f = mat3_f_trace_cg(s, A, B, C);
     float denom = 4.0f*f*f*f - 4.0f*A*f - 8.0f*C;
+    
+    if (fabsf(denom) < 1e-10f)
+    {
+        R = mat3_eye();
+        S = mat3_transpose_mul(R, M); 
+        return;
+    }        
     
     float dfdA = (2.0f*f*f + 2.0f*A) / denom;
     float dfdB = -2.0f / denom;
     float dfdC = (8.0f*f) / denom;
+
+    mat3 dAdM = 2.0f * M;
+    mat3 dBdM = 4.0f * mat3_mul(M, mat3_transpose_mul(M, M));
+    mat3 dCdM = mat3_ddet(M);
     
     R = dfdA*dAdM + dfdB*dBdM + dfdC*dCdM;
     S = mat3_transpose_mul(R, M); 
 }
 
+// Returns true if a matrix is symmetric within some tolerance
+bool mat3_is_sym(const mat3 M, const float tolerance = 1e-4f)
+{
+    return 
+        fabsf(M.xy - M.yx) < tolerance &&
+        fabsf(M.zx - M.xz) < tolerance &&
+        fabsf(M.yz - M.zy) < tolerance;
+}
+
+// For a symmetric matrix returns the first eigen vector given the first eigen value
+vec3 mat3_sym_evec0(const mat3 M, const float eval0)
+{
+    assert(mat3_is_sym(M));
+    
+    vec3 row0 = vec3(M.xx - eval0, M.xy, M.xz);
+    vec3 row1 = vec3(M.yx, M.yy - eval0, M.yz);
+    vec3 row2 = vec3(M.zx, M.zy, M.zz - eval0);
+    
+    vec3 r0xr1 = cross(row0, row1);
+    vec3 r0xr2 = cross(row0, row2);
+    vec3 r1xr2 = cross(row1, row2);
+    
+    float d0 = dot(r0xr1, r0xr1);
+    float d1 = dot(r0xr2, r0xr2);
+    float d2 = dot(r1xr2, r1xr2);
+    
+    if (d0 == 0.0f && d1 == 0.0f && d2 == 0.0f)
+    {
+        // No valid eigen vectors
+        return vec3(1.0f, 0.0f, 0.0f);
+    }
+    else
+    {
+        // Return largest candidate
+        return d0 >= d1 && d0 >= d2 ? r0xr1 / sqrtf(d0) :
+               d1 >= d0 && d1 >= d2 ? r0xr2 / sqrtf(d1) :
+                                      r1xr2 / sqrtf(d2); 
+    }
+}
+
+// For a symmetric matrix returns the second eigen vector given the first eigen vector 
+// and the second eigen value
+vec3 mat3_sym_evec1(const mat3 M, const vec3 evec0, const float eval1)
+{
+    assert(mat3_is_sym(M));
+
+    vec3 u = fabsf(evec0.x) > fabsf(evec0.y) ?
+        vec3(-evec0.z, 0.0f, +evec0.x) / sqrtf(evec0.x * evec0.x + evec0.z * evec0.z) :
+        vec3(0.0f, +evec0.z, -evec0.y) / sqrtf(evec0.y * evec0.y + evec0.z * evec0.z);
+    
+    vec3 v = cross(evec0, u);
+    
+    float m00 = dot(u, mat3_mul_vec3(M, u)) - eval1;
+    float m01 = dot(u, mat3_mul_vec3(M, v));
+    float m11 = dot(v, mat3_mul_vec3(M, v)) - eval1;
+
+    if (fabsf(m00) >= fabsf(m11))
+    {
+        if (maxf(fabsf(m00), fabsf(m01)) <= 0.0f)
+        {
+            return u;
+        }
+        
+        if (fabsf(m00) >= fabsf(m01))
+        {
+            m01 /= m00;
+            m00 = 1.0f / sqrtf(1.0f + m01 * m01);
+            return m01 * m00 * u - m00 * v;
+        }
+        else
+        {
+            m00 /= m01;
+            m01 = 1.0f / sqrtf(1.0f + m00 * m00);
+            return m01 * u - m00 * m01 * v;
+        }        
+    }
+    else
+    {
+        if (maxf(fabsf(m00), fabsf(m01)) <= 0.0f)
+        {
+            return u;
+        }
+        
+        if (fabsf(m11) >= fabsf(m01))
+        {
+            m01 /= m11;
+            m11 = 1.0f / sqrtf(1.0f + m01 * m01);
+            return m11 * u - m01 * m11 * v;
+        }
+        else
+        {
+            m11 /= m01;
+            m01 = 1.0f / sqrtf(1.0f + m11 * m11);
+            return m11 * m01 * u - m01 * v;
+        }        
+    }
+}
+
+// Find the eigen vectors from the eigen values of a symmetric 3x3 matrix
+mat3 mat3_sym_evecs_from_evals(const mat3& M, const vec3 evals)
+{    
+    // Assert matrix is symmetric
+    assert(mat3_is_sym(M));
+    
+    // Check matrix has some magnitude
+    if (M.xy * M.xy + M.xz * M.xz + M.yz * M.yz <= 0.0f)
+    {
+        return mat3_eye();
+    }
+    
+    // Compute Eigen Vectors from Eigen Values
+    if (mat3_det(M) >= 0.0)
+    {
+        vec3 evec0 = mat3_sym_evec0(M, evals.x);
+        vec3 evec1 = mat3_sym_evec1(M, evec0, evals.y);
+        vec3 evec2 = cross(evec1, evec0);
+        return mat3_from_cols(evec0, evec1, evec2);
+    }
+    else
+    {
+        vec3 evec2 = mat3_sym_evec0(M, evals.z);
+        vec3 evec1 = mat3_sym_evec1(M, evec2, evals.y);
+        vec3 evec0 = cross(evec2, evec1);
+        return mat3_from_cols(evec0, evec1, evec2);
+    }
+}
+
+// Compute SVD using polar decomposition and symmetric eigenvector computation
 void mat3_svd(mat3& U, vec3& s, mat3& V, const mat3 M)
 {
     mat3 R, S;
-    mat3_polar(R, S, M);
+    mat3_polar(R, S, s, M);
     
-    V = mat3_transpose(R);
-    mat3 E = mat3_mul(mat3_mul(R, S), V);
-    s = vec3(E.xx, E.yy, E.zz);
-    U = mat3_mul(mat3_mul(M, R), (1.0f / E));
+    V = mat3_sym_evecs_from_evals(S, s);
+    U = mat3_mul(R, V);
 }
 
+// Computes the largest absolute value in the matrix
+float mat3_max_abs(const mat3 M)
+{
+    return maxf(maxf(maxf(maxf(maxf(maxf(maxf(maxf(
+        fabsf(M.xx) , fabsf(M.xy)), fabsf(M.xy)), 
+        fabsf(M.yx)), fabsf(M.yy)), fabsf(M.yz)), 
+        fabsf(M.zx)), fabsf(M.zy)), fabsf(M.zz));
+}
 
+// More numerically stable version of mat3_polar
+void mat3_polar_stable(mat3& R, mat3& S, vec3& s, const mat3 M)
+{
+    float scale = mat3_max_abs(M);
+    if (scale == 0.0f)
+    {
+        R = mat3_eye();
+        S = M;
+        s = vec3();
+        return;
+    }
+    
+    mat3_polar(R, S, s, M / scale);
+    S = scale * S;
+    s = scale * s;
+}
 
+// More numerically stable version of mat3_svd
+void mat3_svd_stable(mat3& U, vec3& s, mat3& V, const mat3 M)
+{
+    float scale = mat3_max_abs(M);
+    if (scale == 0.0f)
+    {
+        U = mat3_eye();
+        s = vec3();
+        V = mat3_eye();
+        return;
+    }
+    
+    mat3 R, S;
+    mat3_polar(R, S, s, M / scale);
+    
+    V = mat3_sym_evecs_from_evals(S, s);
+    U = mat3_mul(R, V);
+    s = scale * s;
+}

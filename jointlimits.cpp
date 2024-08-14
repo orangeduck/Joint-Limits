@@ -289,9 +289,9 @@ static inline void fit_limit_orientations(
     // Perform SVD to extract rotation
     vec3 s;
     mat3 U, V;
-    mat3_svd_piter(U, s, V, inner_product);
-    
-    limit_rotation = mat3_transpose(V);
+    mat3_svd(U, s, V, inner_product);
+
+    limit_rotation = V;
 }
 
 //--------------------------------------
@@ -1318,7 +1318,7 @@ int main(void)
     bool orient_limits = true;
     
     if (orient_limits)
-    {   
+    {
         for (int j = 0; j < db.nbones(); j++)
         {
             fit_limit_orientations(
